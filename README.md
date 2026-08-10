@@ -7,7 +7,10 @@ reported revenue against what can actually be defended, and quantifies the gap.
 
 **Headline: reported revenue overstates defensible revenue by $407,940 — 13.9%.**
 
-Full client write-up: **[FINDINGS.md](FINDINGS.md)**
+- **[FINDINGS.md](FINDINGS.md)** — the client write-up
+- **[TEACHING-GUIDE.md](TEACHING-GUIDE.md)** — build this from an empty folder
+  in four sessions. Every command and query written out, with the question to
+  ask before each reveal.
 
 ---
 
