@@ -1,0 +1,9 @@
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# never commit credentials
+.env
+*.env
+profiles.yml

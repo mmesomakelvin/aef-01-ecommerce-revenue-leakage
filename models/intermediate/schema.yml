@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: int_payments_deduplicated
+    description: "One settling payment per order. Gateway duplicate webhooks removed."
+    columns:
+      - name: order_id
+        description: "Unique after deduplication — that is the entire purpose of this model."
+        data_tests:
+          - unique
+          - not_null
+      - name: payment_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: int_order_revenue
+    description: "One row per order with a single revenue verdict attached."
+    columns:
+      - name: order_id
+        description: "Exactly one row per order. Everything downstream depends on this."
+        data_tests:
+          - unique
+          - not_null
+      - name: revenue_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - recognisable
+                  - cancelled_but_charged
+                  - placed_but_charged
+                  - charged_not_shipped
+                  - never_charged
+      - name: recognised_revenue
+        data_tests:
+          - not_null

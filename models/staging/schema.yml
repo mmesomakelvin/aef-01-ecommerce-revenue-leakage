@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: "One row per order, cleaned and renamed."
+    columns:
+      - name: order_id
+        description: "Unique order identifier."
+        data_tests:
+          - unique
+          - not_null
+      - name: order_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['completed', 'confirmed', 'cancelled', 'placed']
+      - name: order_amount
+        data_tests:
+          - not_null
+
+  - name: stg_payments
+    description: "One row per payment ATTEMPT. Contains duplicates by design."
+    columns:
+      - name: payment_id
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: payment_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['succeeded', 'failed']
