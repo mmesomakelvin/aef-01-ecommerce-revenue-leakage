@@ -2,7 +2,11 @@ version: 2
 
 models:
   - name: int_payments_deduplicated
-    description: "One settling payment per order. Gateway duplicate webhooks removed."
+    description: >
+      One settling payment per order. Failed attempts are dropped and the
+      gateway's duplicate webhook deliveries are removed by keeping the earliest
+      successful settlement per order, tie-broken on payment_id so the result is
+      stable across runs. Removes 642 duplicate rows worth $41,396.82.
     columns:
       - name: order_id
         description: "Unique after deduplication — that is the entire purpose of this model."
@@ -10,12 +14,24 @@ models:
           - unique
           - not_null
       - name: payment_id
+        description: "The surviving settlement for this order."
         data_tests:
           - unique
           - not_null
+      - name: payment_amount
+        description: "Amount actually collected, in the order's currency."
+      - name: gateway_fee
+        description: "Processing fee on the surviving settlement."
+      - name: processed_at
+        description: "When the money settled. Used as the revenue recognition date."
 
   - name: int_order_revenue
-    description: "One row per order with a single revenue verdict attached."
+    description: >
+      One row per order with a single revenue verdict attached. All 50,000
+      orders survive — every join is a left join, so nothing can go missing
+      silently. The order of the conditions in revenue_category is the revenue
+      recognition policy expressed in SQL; changing that order changes the
+      reported revenue figure.
     columns:
       - name: order_id
         description: "Exactly one row per order. Everything downstream depends on this."
@@ -23,6 +39,12 @@ models:
           - unique
           - not_null
       - name: revenue_category
+        description: >
+          The verdict. Mutually exclusive by construction: never_charged (no
+          money moved), cancelled_but_charged (voided order that was charged),
+          placed_but_charged (order never progressed but was charged),
+          charged_not_shipped (no evidence of shipment or delivery), and
+          recognisable (defensible revenue).
         data_tests:
           - accepted_values:
               arguments:
@@ -32,6 +54,17 @@ models:
                   - placed_but_charged
                   - charged_not_shipped
                   - never_charged
+      - name: payment_amount
+        description: "Cash collected. Null where the order was never charged."
+      - name: refund_amount
+        description: "Total refunded against this order. Zero where no refund exists."
       - name: recognised_revenue
+        description: >
+          Payment less refunds, but only for the recognisable category. Zero
+          everywhere else, so the column can be summed directly.
         data_tests:
           - not_null
+      - name: currency
+        description: >
+          USD, GBP or EUR. Summing recognised_revenue across currencies does not
+          produce a valid monetary amount — see rpt_revenue_bridge_by_currency.

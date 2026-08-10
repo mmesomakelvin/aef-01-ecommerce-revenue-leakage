@@ -19,6 +19,13 @@ correctly. This is why the issue has not previously been detected.
 | Revenue per payment gateway | $2,940,566 |
 | Defensible revenue | **$2,532,626** |
 | **Overstatement** | **$407,940 (13.9%)** |
+| Revenue net of payment processing costs | $2,441,835 |
+
+Three findings carry a cash impact rather than an accounting one:
+
+- **$106,706** collected on cancelled or never-progressed orders and never returned
+- **$6,643** in processing fees paid on charges that should not have been taken
+- **$34,120** of orders where every payment attempt failed and the customer stopped
 
 ---
 
@@ -33,6 +40,9 @@ correctly. This is why the issue has not previously been detected.
 | 5 | Less: charged with no shipping evidence | 0.00 |
 | 6 | Less: refunds on recognised orders | (168,542.64) |
 | 7 | **Defensible revenue** | **2,532,625.67** |
+| 8 | Less: payment processing fees on recognised revenue | (90,790.54) |
+| 9 | **Revenue net of payment processing costs** | **2,441,835.13** |
+| 10 | Memo: fees paid on revenue never recognised (sunk) | (6,643.44) |
 
 ---
 
@@ -109,18 +119,18 @@ Retain the cash-basis view separately for treasury purposes.
 Revenue is recorded in three currencies with **no exchange-rate table present
 in any source system**.
 
-| Currency | Recognised |
-|---|---|
-| USD | 1,823,001 |
-| GBP | 357,981 |
-| EUR | 351,643 |
+| Currency | Recognised | Overstatement rate |
+|---|---|---|
+| USD | 1,823,001 | 14.0% |
+| GBP | 357,981 | 13.7% |
+| EUR | 351,643 | 13.5% |
 
 **28% of revenue is non-USD.** The consolidated figure of $2,532,626 is a sum
 of three different units and is not a valid monetary amount.
 
-Leakage is uniform across currencies — 14.0% USD, 13.7% GBP, 13.5% EUR.
-This rules out regional process variation and points to a defect in shared
-platform infrastructure rather than local operations.
+Leakage is uniform across currencies. This rules out regional process variation
+and points to a defect in shared platform infrastructure rather than local
+operations — meaning a single fix addresses all three markets.
 
 We have deliberately not applied a conversion. The choice of rate —
 transaction date, month-end, or internal hedged rate — is a finance policy
@@ -129,7 +139,7 @@ decision that materially changes the result.
 **Recommendation:** provide a rate table and confirm the applicable
 convention. We will restate on receipt.
 
-### 2.7 Payment processing costs
+### 2.6 Payment processing costs
 
 Processing fees on recognised revenue total **$90,791** (3.6%).
 Revenue net of payment costs is **$2,441,835**.
@@ -146,15 +156,49 @@ cost of trading but is not currently tracked anywhere.
 approximately $6,600 per year in fees alone, independent of the revenue
 correction.
 
-### 2.6 Data quality — carrier feed
+### 2.7 Failed payment attempts — $34,120 of demand never collected
+
+The gateway records every payment attempt, including failures and retries.
+Across 50,000 orders:
+
+| Outcome | Orders | Failed attempts | Order value |
+|---|---|---|---|
+| Paid on first attempt | 40,016 | 0 | 2,606,512 |
+| No payment attempted | 4,947 | 0 | 325,202 |
+| Paid after one or more retries | 4,514 | 5,819 | 292,657 |
+| **Every attempt failed** | **523** | **665** | **34,120** |
+
+**5,037 orders encountered at least one payment failure. 4,514 eventually
+succeeded — an 89.6% recovery rate. The remaining 523 orders, worth $34,120,
+were never collected.**
+
+This is demand that reached checkout and produced nothing. It is not
+straightforwardly lost revenue — some customers will have reordered
+successfully — but it is currently unmeasured and unmonitored.
+
+The retry pattern is also worth attention: orders that eventually succeeded
+averaged 2.31 attempts, indicating the failures are transient rather than
+hard declines.
+
+**Recommendation:** monitor the failure recovery rate as an operational
+metric. Investigate whether the 523 non-recovered orders share a payment
+method, currency or issuing region.
+
+### 2.8 Data quality defects
 
 - **640 orders record a delivery date but no shipment date.** Physically
   impossible; indicates a defect in the carrier integration. Revenue is
   unaffected — delivery is accepted as evidence of shipment — but the feed
   is unreliable for any operational analysis.
+- **100 orders (1 in 500) record an update timestamp earlier than their
+  creation timestamp.** Indicates clock drift or record replay in the order
+  platform. Revenue is unaffected. Monitored as a warning rather than a
+  blocking error; escalate if the rate increases.
 - **1,719 charged, cancelled orders have no record in the shipping system.**
   Correct behaviour for fulfilment; the fault is that they were charged.
 - **5,470 orders were never charged at all** and are excluded throughout.
+  This figure reconciles exactly against the payment attempt analysis in §2.7
+  (4,947 with no attempt + 523 where all attempts failed).
 
 ---
 
@@ -162,31 +206,27 @@ correction.
 
 Built as a dbt project on Snowflake, in three layers:
 
-### 2.6 Data quality — carrier feed
-
-- **640 orders record a delivery date but no shipment date.** Physically
-  impossible; indicates a defect in the carrier integration. Revenue is
-  unaffected — delivery is accepted as evidence of shipment — but the feed
-  is unreliable for any operational analysis.
-- **1,719 charged, cancelled orders have no record in the shipping system.**
-  Correct behaviour for fulfilment; the fault is that they were charged.
-- **5,470 orders were never charged at all** and are excluded throughout.
-
----
-
-## 3. Method
-
-Built as a dbt project on Snowflake, in three layers:
-
-- **staging** — one model per source table; renaming and type handling only
-- **intermediate** — deduplication, then a single revenue verdict per order
-- **marts** — the revenue bridge and the monthly recognition view
+- **staging** (4 models) — one per source table; renaming and type handling
+  only, no filtering and no business logic
+- **intermediate** (2 models) — deduplication, then a single revenue verdict
+  per order
+- **marts** (4 models) — the revenue bridge, the per-currency bridge, the
+  monthly recognition view, and the payment attempt analysis
 
 Every order receives exactly one classification, so no amount is counted
-twice and the categories sum to the total.
+twice and the categories sum to the total. The order of conditions determining
+that classification is the revenue recognition policy expressed in SQL;
+changing it changes the reported figure, and it should be owned by Finance.
 
-**18 automated tests** cover uniqueness, completeness, referential integrity,
+**41 automated tests** cover uniqueness, completeness, referential integrity,
 permitted status values, and the arithmetic integrity of the bridge itself.
+One test reports as a warning by design (§2.8, clock skew) — a defect that is
+real, tolerable, and outside our control to fix.
+
+Source freshness thresholds are configured on all four feeds. Note that in a
+live deployment these would alert when a feed stops delivering — the failure
+mode in which every model builds successfully and every dashboard silently
+shows stale figures.
 
 ---
 
@@ -197,4 +237,6 @@ permitted status values, and the arithmetic integrity of the bridge itself.
 | Exchange-rate table and conversion convention | Finance |
 | Confirm treatment of `confirmed` (paid, not yet delivered) orders | Finance |
 | Carrier integration defect — delivery without shipment | Engineering |
+| Order platform clock drift — update before creation | Engineering |
 | Duplicate webhook delivery | Payments provider |
+| Investigate the 523 non-recovered payment failures | Payments provider |

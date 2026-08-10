@@ -1,0 +1,107 @@
+version: 2
+
+models:
+  - name: rpt_revenue_bridge
+    description: >
+      The headline client deliverable. Walks from the figure finance currently
+      reports — the gateway total of all successful payments — down to
+      defensible revenue, one labelled adjustment at a time. Steps 1 to 6 sum
+      to step 7, which is asserted by assert_bridge_balances. Steps 8 and 9 add
+      payment processing costs; step 10 is a memo item and sits outside the
+      reconciliation.
+    columns:
+      - name: step
+        description: "Presentation order. Steps 1-7 form the bridge; 8-10 are additional."
+        data_tests:
+          - unique
+          - not_null
+      - name: line_item
+        description: "Plain-English description of the adjustment, as shown to the client."
+        data_tests:
+          - not_null
+      - name: amount
+        description: >
+          Signed amount. Negative values are deductions. Mixed currency — see
+          rpt_revenue_bridge_by_currency for the valid per-currency view.
+        data_tests:
+          - not_null
+
+  - name: rpt_revenue_bridge_by_currency
+    description: >
+      The same bridge, split by currency, with each step as a column. This is
+      the arithmetically valid version of rpt_revenue_bridge — each row stays
+      within a single currency and is never added to another. The overstatement
+      column shows leakage is uniform across markets (14.0% USD, 13.7% GBP,
+      13.5% EUR), which points to a shared platform defect rather than
+      regional process variation.
+    columns:
+      - name: currency
+        description: "USD, GBP or EUR."
+        data_tests:
+          - unique
+          - not_null
+      - name: gateway_total
+        description: "All successful payments in this currency, before any adjustment."
+        data_tests:
+          - not_null
+      - name: defensible_revenue
+        description: "The bridge endpoint for this currency."
+        data_tests:
+          - not_null
+      - name: overstatement
+        description: "Gateway total less defensible revenue, in this currency."
+
+  - name: rpt_revenue_by_month
+    description: >
+      Demonstrates that monthly revenue reporting is unreliable while the annual
+      total is correct. Refunds are shown twice — once in the month they were
+      processed (as the business currently reports) and once in the month of the
+      original sale (as they should be). The distortion column is the difference,
+      and it sums to exactly zero across all periods, which is why year-end
+      reconciliation has never surfaced the problem.
+    columns:
+      - name: month
+        description: "First day of the month. Includes 2025 months holding 2024 refunds."
+        data_tests:
+          - unique
+          - not_null
+      - name: gross_revenue
+        description: "Recognised revenue before refunds, by month of payment."
+      - name: refunds_as_booked
+        description: "Refunds grouped by the month they were processed. What is reported today."
+      - name: refunds_matched_to_sale
+        description: "The same refunds grouped by the month of the original sale."
+      - name: net_as_reported
+        description: "Gross less refunds as booked. The current, incorrect monthly figure."
+      - name: net_matched
+        description: "Gross less refunds matched to sale. The correct monthly figure."
+      - name: distortion
+        description: >
+          Refunds as booked less refunds matched. Positive means the month is
+          understated; negative means overstated. Sums to zero across all months.
+
+  - name: rpt_payment_attempts
+    description: >
+      Payment attempt outcomes per order. Quantifies retry behaviour and, more
+      importantly, isolates orders where every payment attempt failed — revenue
+      that was demanded and never collected, which no other model in this
+      project surfaces.
+    columns:
+      - name: attempt_outcome
+        description: >
+          first_time_success (paid on the first try), recovered_after_retry
+          (paid, but only after one or more failures), all_attempts_failed
+          (attempted and never collected), no_payment_attempted (no payment
+          record exists at all).
+        data_tests:
+          - unique
+          - not_null
+      - name: orders
+        description: "Number of orders in this outcome."
+      - name: failed_attempts
+        description: "Total failed payment attempts across those orders."
+      - name: order_value
+        description: >
+          Total order value in this outcome, mixed currency. For
+          all_attempts_failed this is revenue at risk, not revenue lost —
+          some customers may have reordered.

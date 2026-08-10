@@ -4,24 +4,45 @@ sources:
   - name: raw
     database: LUMEN_LOOM
     schema: RAW
-    description: "Raw operational feeds, as emitted by the source systems."
+    description: >
+      Raw operational feeds, as emitted by the source systems. Loaded by the
+      data generator, never modified by dbt. Everything here is read-only.
     tables:
       - name: raw_orders
         description: "One row per order. Status reflects current lifecycle state."
         config:
           loaded_at_field: updated_at
+          freshness:
+            warn_after: {count: 36, period: hour}
+            error_after: {count: 48, period: hour}
 
       - name: raw_payments
-        description: "One row per payment ATTEMPT (includes failures and retries)."
+        description: >
+          One row per payment ATTEMPT, not per payment. Includes failures,
+          customer retries, and duplicate webhook deliveries from the gateway.
         config:
           loaded_at_field: attempted_at
+          freshness:
+            warn_after: {count: 36, period: hour}
+            error_after: {count: 48, period: hour}
 
       - name: raw_refunds
-        description: "One row per refund. Can be partial; often a later month than the order."
+        description: >
+          One row per refund. Can be partial, and frequently lands in a later
+          month than the original order.
         config:
           loaded_at_field: processed_at
+          freshness:
+            warn_after: {count: 36, period: hour}
+            error_after: {count: 48, period: hour}
 
       - name: raw_shipping
-        description: "One row per shipment. Timestamps go missing on carrier API timeouts."
+        description: >
+          One row per shipment. SHIPPED_AT and DELIVERED_AT go missing when the
+          carrier API times out, so the freshness window is deliberately looser
+          than the other feeds.
         config:
           loaded_at_field: shipped_at
+          freshness:
+            warn_after: {count: 72, period: hour}
+            error_after: {count: 96, period: hour}

@@ -2,30 +2,57 @@ version: 2
 
 models:
   - name: stg_orders
-    description: "One row per order, cleaned and renamed."
+    description: >
+      One row per order, cleaned and renamed. Statuses lowercased and currency
+      uppercased for consistency. No filtering and no business logic — this
+      model does not decide what counts as revenue.
     columns:
       - name: order_id
-        description: "Unique order identifier."
+        description: "Unique order identifier. The primary key of the project."
         data_tests:
           - unique
           - not_null
+      - name: customer_id
+        description: "The customer who placed the order."
       - name: order_status
+        description: >
+          Current lifecycle state. 'placed' means ordered but not progressed;
+          'confirmed' means paid and in progress; 'completed' means fulfilled;
+          'cancelled' means voided — though cash may still have moved.
         data_tests:
           - accepted_values:
               arguments:
                 values: ['completed', 'confirmed', 'cancelled', 'placed']
       - name: order_amount
+        description: "Order value in the order's own currency. Not necessarily what was charged."
         data_tests:
           - not_null
+      - name: currency
+        description: "USD, GBP or EUR. No exchange-rate table exists in any source system."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['USD', 'GBP', 'EUR']
+      - name: ordered_at
+        description: "When the order was created in the source system."
+      - name: status_updated_at
+        description: >
+          When the order last changed state. Approximately 1 in 500 rows record
+          a value earlier than ordered_at — see assert_order_timestamps_sane.
 
   - name: stg_payments
-    description: "One row per payment ATTEMPT. Contains duplicates by design."
+    description: >
+      One row per payment ATTEMPT, not per payment. Contains failed attempts,
+      customer retries and duplicate gateway webhooks by design. Do not join
+      this model to orders directly — use int_payments_deduplicated.
     columns:
       - name: payment_id
+        description: "Unique per attempt. Not unique per order."
         data_tests:
           - unique
           - not_null
       - name: order_id
+        description: "The order this attempt belongs to. Repeats across attempts."
         data_tests:
           - not_null
           - relationships:
@@ -33,7 +60,70 @@ models:
                 to: ref('stg_orders')
                 field: order_id
       - name: payment_status
+        description: "'succeeded' or 'failed'. Only succeeded attempts moved money."
         data_tests:
           - accepted_values:
               arguments:
                 values: ['succeeded', 'failed']
+      - name: payment_amount
+        description: "Amount attempted, in the order's currency."
+      - name: gateway_fee
+        description: "Processing fee charged by the gateway. Zero on failed attempts."
+      - name: attempted_at
+        description: "When the attempt was made."
+      - name: processed_at
+        description: "When the attempt settled. Null for failed attempts."
+
+  - name: stg_refunds
+    description: >
+      One row per completed refund. Refunds can be partial, and roughly half
+      land in a later calendar month than the original sale — the cause of the
+      monthly reporting distortion in rpt_revenue_by_month.
+    columns:
+      - name: refund_id
+        description: "Unique refund identifier."
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "The order being refunded."
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: refund_amount
+        description: "Amount returned. May be less than the original payment."
+        data_tests:
+          - not_null
+      - name: refunded_at
+        description: >
+          When the refund was processed. Renamed from processed_at to avoid
+          colliding with the payments column of the same name.
+
+  - name: stg_shipping
+    description: >
+      One row per shipment, for orders that were paid. The carrier feed drops
+      timestamps on API timeouts, so shipped_at and delivered_at are both
+      nullable and are not reliable evidence of non-shipment on their own.
+    columns:
+      - name: shipment_id
+        description: "Unique shipment identifier."
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "Exactly one shipment row per order — verified, safe to join."
+        data_tests:
+          - unique
+          - not_null
+      - name: shipped_at
+        description: >
+          When the shipment left. Null on carrier API timeout — treat a missing
+          value as unknown, not as proof the order never shipped.
+      - name: delivered_at
+        description: >
+          When the shipment arrived. 640 rows carry a delivery date with no
+          shipment date, which is physically impossible and indicates a defect
+          in the carrier integration.
